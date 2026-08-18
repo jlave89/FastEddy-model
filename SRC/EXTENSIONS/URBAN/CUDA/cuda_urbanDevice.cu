@@ -111,7 +111,7 @@ __global__ void cudaDevice_URBANinter(float* z0m, float* z0t, float* hydroTauFld
         hydroTauFlds[3*fldStride+ijk] = 0.0;
         hydroTauFlds[8*fldStride+ijk] = 0.0;
         fricVel[ij] = 0.0;
-        htFlux[ij] = 0.0;
+//        htFlux[ij] = 0.0;  // What happens if we leave htFlux on?
         invOblen[ij] = 0.0;
         if (moistureSelector_d > 0){
           moistTauFlds[2*fldStride+ijk] = 0.0;
