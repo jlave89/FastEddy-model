@@ -48,7 +48,7 @@ extern "C" int cuda_urbanDeviceCleanup();
 __global__ void cudaDevice_URBANinter(float* z0m, float* z0t, float* hydroTauFlds, float* moistTauFlds,
                                       float* fricVel, float* htFlux, float* qFlux, float* invOblen,
                                       float* bdg_mask, float* sea_mask, float* urban_redis,
-                                      float simTime, int fluxCaptured);
+                                      float* flux_bc, float simTime, int fluxCaptured);
 __global__ void cudaDevice_URBANfinal(float* hydroFlds_d, float* hydroFldsFrhs_d, float* hydroBaseStateFlds_d,
 	                              float* hydroAuxScalars_d, float* hydroAuxScalarsFrhs_d,
                                       float* hydroFldsFrhsMoist_d,

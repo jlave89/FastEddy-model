@@ -470,7 +470,7 @@ extern "C" int cuda_hydroCoreDeviceBuildFrhs(float simTime, int simTime_it, int 
       cudaDevice_URBANinter<<<grid, tBlock>>>(z0m_d, z0t_d, hydroTauFlds_d, moistTauFlds_d, 
 		                              fricVel_d, htFlux_d, qFlux_d, invOblen_d, 
 			      	              building_mask_d, sea_mask_d, urban_heat_redis_d,
-                                              simTime, urban_flux_captured);
+                                              urban_flux_bc_d, simTime, urban_flux_captured);
       /* Argument is captured at launch. Later calls must not reread the zeroed footprints. */
       if((urbanSelector == 3) && (surflayerSelector == 1) && (surflayer_idealsine == 0)){
         urban_flux_captured = 1;

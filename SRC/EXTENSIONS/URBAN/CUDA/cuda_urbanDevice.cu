@@ -101,7 +101,7 @@ extern "C" int cuda_urbanDeviceCleanup(){
 __global__ void cudaDevice_URBANinter(float* z0m, float* z0t, float* hydroTauFlds, float* moistTauFlds, 
 		                      float* fricVel, float* htFlux, float* qFlux, float* invOblen, 
 				      float* bdg_mask, float* sea_mask, float* urban_redis,
-                                      float simTime, int fluxCaptured){
+                                      float* flux_bc, float simTime, int fluxCaptured){
 
    int i,j,k,ijk,ij;
    int fldStride;
@@ -144,12 +144,12 @@ __global__ void cudaDevice_URBANinter(float* z0m, float* z0t, float* hydroTauFld
         if(surflayer_idealsine_d == 1){
           float pi = acosf(-1.0);
           if((simTime > surflayer_ideal_ts_d) && (simTime <= surflayer_ideal_te_d)){
-            urban_flux_bc_d[ij] = surflayer_wth_d + surflayer_ideal_amp_d*sin(pi*(simTime-surflayer_ideal_ts_d)/(surflayer_ideal_te_d-surflayer_ideal_ts_d));
+            flux_bc[ij] = surflayer_wth_d + surflayer_ideal_amp_d*sin(pi*(simTime-surflayer_ideal_ts_d)/(surflayer_ideal_te_d-surflayer_ideal_ts_d));
           }else{
-            urban_flux_bc_d[ij] = surflayer_wth_d;
+            flux_bc[ij] = surflayer_wth_d;
           }
         }else if(fluxCaptured == 0){
-          urban_flux_bc_d[ij] = htFlux[ij];
+          flux_bc[ij] = htFlux[ij];
         }
       }
 
