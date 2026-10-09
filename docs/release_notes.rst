@@ -9,6 +9,10 @@ FastEddy-model Version 5.0.1 Release Notes (20260813)
 
    * Fix to remove twice allocated fields to avoid using a larger device memory footprint than required
 
+.. dropdown:: Enhancements
+
+   * Building temperature follows the surface thermal boundary condition (urbanSelector=3)
+
 
 FastEddy-model Version 5.0 Release Notes (20260518)
 ===================================================

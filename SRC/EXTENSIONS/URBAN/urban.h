@@ -21,13 +21,16 @@
 #define URBAN_FAIL       10
 
 /*---URBAN parameters*/
-extern int urbanSelector;      /* urban selector: 0=off, 1=on, 2=on with thermal relaxation towards base state */
+extern int urbanSelector;      /* urban selector: 0=off, 1=on, 2=on with thermal relaxation towards base state, 3=building temperature follows the surface thermal boundary condition */
 extern float cd_build;         /* c_d coefficient used by the drag-based building formulation: -c_d|u_i|u_i */
 extern float ct_build;         /* c_t coefficient (s-1) used by the drag-based building formulation: -c_t(rho*theta-rho_b*theta_b) & -c_t(rho-rho_b) */
+extern float urban_thermal_depth; /* mixed-layer depth (m) for flux-driven building temperature when urbanSelector = 3 and surflayerSelector = 1 */
 extern float *building_mask;   /* Base Address of memory containing building mask 0,1 field */
 extern float delta_aware_bdg;  /* scale-aware correction for building forcing and limiters */
 extern int urban_heatRedis;        /* selector to activate surface heat redistribution */
 extern float *urban_heat_redis;    /* Base Address of memory containing 2d map of heat redistribution coefficient in urban areas */
+extern float *urban_flux_bc;       /* prescribed surface heat flux captured before building footprints are zeroed */
+extern float *urban_theta_bc;      /* footprint potential temperature integrated from urban_flux_bc */
 
 /*----->>>>> int URBANGetParams();   ----------------------------------------------------------------------
  * Obtain parameters for the URBAN sub-module

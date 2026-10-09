@@ -156,6 +156,15 @@ extern "C" int cuda_timeIntDeviceCommence(int it){
           printf("cuda_timeIntCommenceRK3_WS2002()  Kernel execution time (ms): %12.8f\n", elapsedTime);
 #endif
        } //end for RKstage
+#ifdef URBAN_EXT
+       /* Building temperature follows the completed time level, before tower samples read it. */
+       if(urbanSelector == 3){
+         cudaDevice_URBANthermalBC<<<grid, tBlock>>>(dt, hydroFlds_d, hydroBaseStateFlds_d,
+                                                     building_mask_d, tskin_d,
+                                                     urban_flux_bc_d, urban_theta_bc_d);
+         gpuErrchk( cudaGetLastError() );
+       }
+#endif
        if(towerIOSelector > 0){
 	 Ntaus = 9;
          //Append time-advanced data to tower buffers

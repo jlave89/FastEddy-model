@@ -121,7 +121,7 @@ cellpert_tvcp = 1 # time-varying CP method selector: 0= off, 1= on (hydroBCs == 
 cellpert_eckert = 0.05 # Eckert number for the potential temperature perturbations (hydroBCs == 1)
 cellpert_tsfact = 0.333 #0.5 # 1.0 # factor on the refreshing perturbation time scale (hydroBCs == 1)
 #--URBAN
-urbanSelector = 1 # urban selector: 0=off, 1=on
+urbanSelector = 1 # urban selector: 0=off, 1=on. Use urbanSelector = 3 so building temperature follows the surface thermal boundary condition; keep urban_heatRedis = 0 with selector 3
 #------------: BASE-STATE ---
 stabilityScheme = 2 # Scheme used to set hydrostatic, stability-dependent Base-State EOS fields
 temp_grnd = 300.0 # Air Temperature (K) at the ground used to set hydrostatic Base-State EOS fields

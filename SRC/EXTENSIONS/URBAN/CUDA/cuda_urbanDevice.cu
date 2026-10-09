@@ -15,13 +15,16 @@
 */
 /*---URBAN*/
 /*Parameters*/
-__constant__ int urbanSelector_d;          /* urban selector: 0=off, 1=on */
+__constant__ int urbanSelector_d;          /* urban selector: 0=off, 1=on, 2=relax to base state, 3=surface thermal boundary condition */
 __constant__ float cd_build_d;             /* c_d coefficient (m-1) used by the drag-based building formulation: -c_d|u|u_i */
 __constant__ float ct_build_d;             /* c_t coefficient (s-1) used by the drag-based building formulation: -c_t(rho*theta-rho_b*theta_b) & -c_t(rho-rho_b) */
 __constant__ float delta_aware_bdg_d;      /* scale-aware correction for building forcing and limiters */
+__constant__ float urban_thermal_depth_d;  /* mixed-layer depth (m) for flux-driven building temperature */
 float* building_mask_d;                    /* building mask field: 0 (atmosphere) or 1 (building) */
 __constant__ int urban_heatRedis_d;        /* selector to activate surface heat redistribution */
 float *urban_heat_redis_d;                 /* Base Address of memory containing 2d map of heat redistribution coefficient in urban areas */
+float *urban_flux_bc_d = NULL;             /* prescribed surface heat flux captured before footprints are zeroed */
+float *urban_theta_bc_d = NULL;            /* footprint potential temperature integrated from urban_flux_bc */
 
 /*#################------------ URBAN submodule function definitions ------------------#############*/
 /*----->>>>> int cuda_urbanDeviceSetup();       ---------------------------------------------------------
@@ -34,6 +37,7 @@ extern "C" int cuda_urbanDeviceSetup(){
    cudaMemcpyToSymbol(urbanSelector_d, &urbanSelector, sizeof(int));
    cudaMemcpyToSymbol(cd_build_d, &cd_build, sizeof(float));
    cudaMemcpyToSymbol(ct_build_d, &ct_build, sizeof(float));
+   cudaMemcpyToSymbol(urban_thermal_depth_d, &urban_thermal_depth, sizeof(float));
 
    Nelems = (size_t)((Nxp+2*Nh)*(Nyp+2*Nh)*(Nzp+2*Nh));
    fecuda_DeviceMalloc(Nelems, &building_mask_d);
@@ -46,6 +50,29 @@ extern "C" int cuda_urbanDeviceSetup(){
      Nelems = (Nxp+2*Nh)*(Nyp+2*Nh);
      fecuda_DeviceMalloc(Nelems, &urban_heat_redis_d);
      cudaMemcpy(urban_heat_redis_d, urban_heat_redis, Nelems*sizeof(float), cudaMemcpyHostToDevice);
+   }
+
+   /* Flux-driven building temperature. theta_b starts at the base-state surface potential temperature. */
+   if((urbanSelector == 3) && (surflayerSelector == 1)){
+     int i,j,ij,ijk;
+     int fldStride;
+     float *rhoBase;
+     float *thetaBase;
+     fldStride = (Nxp+2*Nh)*(Nyp+2*Nh)*(Nzp+2*Nh);
+     rhoBase = &hydroBaseStateFlds[RHO_INDX_BS*fldStride];
+     thetaBase = &hydroBaseStateFlds[THETA_INDX_BS*fldStride];
+     for(i=iMin-Nh; i < iMax+Nh; i++){
+       for(j=jMin-Nh; j < jMax+Nh; j++){
+         ij = i*(Nyp+2*Nh)+j;
+         ijk = i*(Nyp+2*Nh)*(Nzp+2*Nh)+j*(Nzp+2*Nh)+kMin;
+         urban_theta_bc[ij] = thetaBase[ijk]/rhoBase[ijk];
+       }
+     }
+     Nelems = (Nxp+2*Nh)*(Nyp+2*Nh);
+     fecuda_DeviceMalloc(Nelems, &urban_flux_bc_d);
+     fecuda_DeviceMalloc(Nelems, &urban_theta_bc_d);
+     cudaMemcpy(urban_flux_bc_d, urban_flux_bc, Nelems*sizeof(float), cudaMemcpyHostToDevice);
+     cudaMemcpy(urban_theta_bc_d, urban_theta_bc, Nelems*sizeof(float), cudaMemcpyHostToDevice);
    }
 
    return(errorCode);
@@ -62,6 +89,10 @@ extern "C" int cuda_urbanDeviceCleanup(){
    if(urban_heatRedis > 0){
      cudaFree(urban_heat_redis_d);
    }
+   if((urbanSelector == 3) && (surflayerSelector == 1)){
+     cudaFree(urban_flux_bc_d);
+     cudaFree(urban_theta_bc_d);
+   }
 
    return(errorCode);
 
@@ -69,7 +100,8 @@ extern "C" int cuda_urbanDeviceCleanup(){
 
 __global__ void cudaDevice_URBANinter(float* z0m, float* z0t, float* hydroTauFlds, float* moistTauFlds, 
 		                      float* fricVel, float* htFlux, float* qFlux, float* invOblen, 
-				      float* bdg_mask, float* sea_mask, float* urban_redis){
+				      float* bdg_mask, float* sea_mask, float* urban_redis,
+                                      float simTime, int fluxCaptured){
 
    int i,j,k,ijk,ij;
    int fldStride;
@@ -105,13 +137,29 @@ __global__ void cudaDevice_URBANinter(float* z0m, float* z0t, float* hydroTauFld
         } //if-else urban_heatRedis_d > 0
       }
 
+      /* Capture the prescribed heat flux before building footprints are zeroed below.
+         Sinusoidal forcing is recomputed because the surface layer overwrites htFlux on every call.
+         A constant or file-provided map is copied once; later calls would otherwise read those zeroes. */
+      if((urbanSelector_d == 3) && (surflayerSelector_d == 1)){
+        if(surflayer_idealsine_d == 1){
+          float pi = acosf(-1.0);
+          if((simTime > surflayer_ideal_ts_d) && (simTime <= surflayer_ideal_te_d)){
+            urban_flux_bc_d[ij] = surflayer_wth_d + surflayer_ideal_amp_d*sin(pi*(simTime-surflayer_ideal_ts_d)/(surflayer_ideal_te_d-surflayer_ideal_ts_d));
+          }else{
+            urban_flux_bc_d[ij] = surflayer_wth_d;
+          }
+        }else if(fluxCaptured == 0){
+          urban_flux_bc_d[ij] = htFlux[ij];
+        }
+      }
+
       //Intermediate-timestep stage calculations
       if (bdg_mask[ijk] > 0.0){
         hydroTauFlds[2*fldStride+ijk] = 0.0;
         hydroTauFlds[3*fldStride+ijk] = 0.0;
         hydroTauFlds[8*fldStride+ijk] = 0.0;
         fricVel[ij] = 0.0;
-//        htFlux[ij] = 0.0;  // What happens if we leave htFlux on?
+        htFlux[ij] = 0.0;
         invOblen[ij] = 0.0;
         if (moistureSelector_d > 0){
           moistTauFlds[2*fldStride+ijk] = 0.0;
@@ -176,6 +224,88 @@ __global__ void cudaDevice_URBANfinal(float* hydroFlds_d, float* hydroFldsFrhs_d
 
 } // end cudaDevice_URBANfinal()
 
+/*----->>>>> __device__ void cudaDevice_URBANapplyThermalState(); ---------------------------------------------
+* Hold rho*theta at the base state (perturbation pressure stays zero) and reset rho so
+* (rho*theta)/rho equals theta_target. Momentum is removed explicitly.
+*/
+__device__ void cudaDevice_URBANapplyThermalState(float* rho, float* u, float* v, float* w, float* rhoTheta,
+                                                  float rhoTheta_base, float theta_target){
+  *rhoTheta = rhoTheta_base;
+  *rho = rhoTheta_base/theta_target;
+  *u = 0.0;
+  *v = 0.0;
+  *w = 0.0;
+}
+
+/*----->>>>> __global__ void cudaDevice_URBANthermalBC(); ----------------------------------------------------
+* After the completed timestep, set building temperature from the surface thermal boundary condition.
+* Owned cells only. surflayerSelector = 1 integrates one potential temperature per footprint, so the
+* surface thread owns the column. Selectors 2 and 3 convert tskin with the base-state Exner function.
+*/
+__global__ void cudaDevice_URBANthermalBC(float dt, float* hydroFlds, float* hydroBaseStateFlds,
+                                          float* bdg_mask, float* tskin,
+                                          float* flux_bc, float* theta_bc){
+   int i,j,k,kk,ijk,ij;
+   int fldStride;
+   int iStride,jStride,kStride;
+   int iStride2d,jStride2d;
+   float constant_1;
+   float rhoTheta_base;
+   float theta_target;
+
+   i = (blockIdx.x)*blockDim.x + threadIdx.x;
+   j = (blockIdx.y)*blockDim.y + threadIdx.y;
+   k = (blockIdx.z)*blockDim.z + threadIdx.z;
+
+   fldStride = (Nx_d+2*Nh_d)*(Ny_d+2*Nh_d)*(Nz_d+2*Nh_d);
+   iStride = (Ny_d+2*Nh_d)*(Nz_d+2*Nh_d);
+   jStride = (Nz_d+2*Nh_d);
+   kStride = 1;
+   iStride2d = (Ny_d+2*Nh_d);
+   jStride2d = 1;
+
+   if((i >= iMin_d)&&(i < iMax_d) &&
+      (j >= jMin_d)&&(j < jMax_d)){
+      ij = i*iStride2d + j*jStride2d;
+
+      if(surflayerSelector_d == 1){
+        /* One write of theta_b per column. Other k threads must not also increment it. */
+        if(k == kMin_d){
+          theta_bc[ij] = theta_bc[ij] + dt*flux_bc[ij]/urban_thermal_depth_d;
+          theta_target = theta_bc[ij];
+          for(kk=kMin_d; kk < kMax_d; kk++){
+            ijk = i*iStride + j*jStride + kk*kStride;
+            if(bdg_mask[ijk] > 0.0){
+              rhoTheta_base = hydroBaseStateFlds[fldStride*THETA_INDX_BS+ijk];
+              cudaDevice_URBANapplyThermalState(&hydroFlds[fldStride*RHO_INDX+ijk],
+                                                &hydroFlds[fldStride*U_INDX+ijk],
+                                                &hydroFlds[fldStride*V_INDX+ijk],
+                                                &hydroFlds[fldStride*W_INDX+ijk],
+                                                &hydroFlds[fldStride*THETA_INDX+ijk],
+                                                rhoTheta_base, theta_target);
+            }
+          }
+        }
+      }else if(((surflayerSelector_d == 2) || (surflayerSelector_d == 3)) &&
+               (k >= kMin_d) && (k < kMax_d)){
+        ijk = i*iStride + j*jStride + k*kStride;
+        if(bdg_mask[ijk] > 0.0){
+          rhoTheta_base = hydroBaseStateFlds[fldStride*THETA_INDX_BS+ijk];
+          /* Same Exner conversion as cudaDevice_SurfaceLayerLSMdry, using p_base(k) instead of the cell pressure. */
+          constant_1 = R_gas_d/powf(refPressure_d, R_cp_d);
+          theta_target = tskin[ij]*powf((refPressure_d/(powf(rhoTheta_base*constant_1, cp_cv_d))), R_cp_d);
+          cudaDevice_URBANapplyThermalState(&hydroFlds[fldStride*RHO_INDX+ijk],
+                                            &hydroFlds[fldStride*U_INDX+ijk],
+                                            &hydroFlds[fldStride*V_INDX+ijk],
+                                            &hydroFlds[fldStride*W_INDX+ijk],
+                                            &hydroFlds[fldStride*THETA_INDX+ijk],
+                                            rhoTheta_base, theta_target);
+        }
+      }
+   }//end if in the owned horizontal range
+
+} // end cudaDevice_URBANthermalBC()
+
 /*----->>>>> __device__ void  cudaDevice_UrbanDragMethod();  --------------------------------------------------
 */
 __device__ void cudaDevice_UrbanDragMethod(float* rho, float* u, float* v, float* w, float* th, float* th_base, float* rho_base, float* Frhs_u, float* Frhs_v, float* Frhs_w, float* Frhs_th, float* Frhs_rho, float* bdg_mask){
@@ -208,7 +338,7 @@ __device__ void cudaDevice_UrbanDragMethod(float* rho, float* u, float* v, float
   *Frhs_u  = *Frhs_u - copysign(1.0,fBuild_u)*fminf(fabsf(fBuild_u),fBuild_ulim_u);
   *Frhs_v  = *Frhs_v - copysign(1.0,fBuild_v)*fminf(fabsf(fBuild_v),fBuild_ulim_v);
   *Frhs_w  = *Frhs_w - copysign(1.0,fBuild_w)*fminf(fabsf(fBuild_w),fBuild_ulim_w);
-  if(urbanSelector_d==1){
+  if((urbanSelector_d==1)||(urbanSelector_d==3)){
     *Frhs_th = *Frhs_th*(1.0-(*bdg_mask)) ;
     *Frhs_rho = *Frhs_rho*(1.0-(*bdg_mask));
   }else if(urbanSelector_d==2){
@@ -233,7 +363,7 @@ __device__ void cudaDevice_UrbanDragMethodAuxScalar(float* AuxScalar, float* Frh
   fBuild_AuxSc  = cd_build_d*delta_aware_bdg_d*fabsf(*AuxScalar)*(*bdg_mask);
   fBuild_ulim_AuxSc = fabsf((*Frhs_AuxScalar)*fBuild_ulim_fact);
 
-  if(urbanSelector_d==1){
+  if((urbanSelector_d==1)||(urbanSelector_d==3)){
     *Frhs_AuxScalar = *Frhs_AuxScalar*(1.0-(*bdg_mask));
   }else if(urbanSelector_d==2){
     *Frhs_AuxScalar = *Frhs_AuxScalar - copysign(1.0,fBuild_AuxSc)*fminf(fabsf(fBuild_AuxSc),fBuild_ulim_AuxSc);

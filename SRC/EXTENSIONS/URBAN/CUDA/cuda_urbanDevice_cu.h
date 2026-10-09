@@ -21,14 +21,17 @@
 
 /*##############------------------- URBAN submodule variable declarations ---------------------#################*/
 /* Parameters */
-extern __constant__ int urbanSelector_d;          /* urban selector: 0=off, 1=on */
+extern __constant__ int urbanSelector_d;          /* urban selector: 0=off, 1=on, 2=relax to base state, 3=surface thermal boundary condition */
 extern __constant__ float cd_build_d;             /* c_d coefficient (m-1) used by the drag-based building formulation: -c_d|u_i|u_i */
 extern __constant__ float ct_build_d;             /* c_t coefficient (s-1) used by the drag-based building formulation: -c_t(rho*theta-rho_b*theta_b) & -c_t(rho-rho_b) */
 extern __constant__ float delta_aware_bdg_d;      /* scale-aware correction for building forcing and limiters */
+extern __constant__ float urban_thermal_depth_d;  /* mixed-layer depth (m) for flux-driven building temperature */
 /* array fields */
 extern float* building_mask_d;                    /* Base Address of memory containing building mask field: 0 (atmosphere) or 1 (building) */
 extern __constant__ int urban_heatRedis_d;        /* selector to activate surface heat redistribution */
 extern float *urban_heat_redis_d;                 /* Base Address of memory containing 2d map of heat redistribution coefficient in urban areas */
+extern float *urban_flux_bc_d;                    /* prescribed surface heat flux captured before footprints are zeroed */
+extern float *urban_theta_bc_d;                   /* footprint potential temperature integrated from urban_flux_bc */
 
 /*##############-------------- URBAN_CUDADEV submodule function declarations ------------------############*/
 
@@ -44,11 +47,15 @@ extern "C" int cuda_urbanDeviceCleanup();
 
 __global__ void cudaDevice_URBANinter(float* z0m, float* z0t, float* hydroTauFlds, float* moistTauFlds,
                                       float* fricVel, float* htFlux, float* qFlux, float* invOblen,
-                                      float* bdg_mask, float* sea_mask, float* urban_redis);
+                                      float* bdg_mask, float* sea_mask, float* urban_redis,
+                                      float simTime, int fluxCaptured);
 __global__ void cudaDevice_URBANfinal(float* hydroFlds_d, float* hydroFldsFrhs_d, float* hydroBaseStateFlds_d,
 	                              float* hydroAuxScalars_d, float* hydroAuxScalarsFrhs_d,
                                       float* hydroFldsFrhsMoist_d,
 			      	      float* building_mask_d);
+__global__ void cudaDevice_URBANthermalBC(float dt, float* hydroFlds_d, float* hydroBaseStateFlds_d,
+                                          float* building_mask_d, float* tskin_d,
+                                          float* urban_flux_bc_d, float* urban_theta_bc_d);
 
 /*----->>>>> __device__ void  cudaDevice_UrbanDragMethod();  --------------------------------------------------
 * This cuda kerne lsets up the cells and their id in the urban drag-based approach

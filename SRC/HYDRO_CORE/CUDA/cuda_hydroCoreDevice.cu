@@ -466,9 +466,15 @@ extern "C" int cuda_hydroCoreDeviceBuildFrhs(float simTime, int simTime_it, int 
 #endif
 #ifdef URBAN_EXT
     if(urbanSelector > 0 && ((physics_oneRKonly==0) || (timeStage==numRKstages))){
+      static int urban_flux_captured = 0;
       cudaDevice_URBANinter<<<grid, tBlock>>>(z0m_d, z0t_d, hydroTauFlds_d, moistTauFlds_d, 
 		                              fricVel_d, htFlux_d, qFlux_d, invOblen_d, 
-			      	              building_mask_d, sea_mask_d, urban_heat_redis_d);
+			      	              building_mask_d, sea_mask_d, urban_heat_redis_d,
+                                              simTime, urban_flux_captured);
+      /* Argument is captured at launch. Later calls must not reread the zeroed footprints. */
+      if((urbanSelector == 3) && (surflayerSelector == 1) && (surflayer_idealsine == 0)){
+        urban_flux_captured = 1;
+      }
     }
 #else
     if( (physics_oneRKonly==0) || (timeStage==numRKstages) ){

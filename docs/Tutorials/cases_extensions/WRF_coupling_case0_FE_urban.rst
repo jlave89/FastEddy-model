@@ -61,3 +61,18 @@ To run a building-resolving FastEddy simulation with SHFR, the capability must a
 
         #-- URBAN
         urban_heatRedis = 1 # selector to activate surface heat redistribution
+
+Building temperature follows the surface boundary condition
+-----------------------------------------------------------
+
+With :code:`urbanSelector = 1` the building mask stays at its initial temperature, and with :code:`urbanSelector = 2` it is relaxed toward the fixed base state. Over a multi-hour run that solid becomes a thermal and pressure anomaly relative to the surroundings, and a spurious city-scale inflow or outflow develops. :code:`urbanSelector = 3` is the setting to use when that flow appears.
+
+Selector 3 keeps the building drag and still suppresses thermal, density, moisture, and scalar tendencies inside the mask. After each completed timestep the building temperature is set from the same surface thermal boundary condition that forces the rest of the domain. For :code:`surflayerSelector = 2` or :code:`3` that target is the local skin temperature, converted to potential temperature with the base-state Exner function. For :code:`surflayerSelector = 1` the boundary condition is a heat flux: one potential temperature per footprint is integrated with :code:`urban_thermal_depth` (meters, default 1000) and applied through the column. Real-case runs use :code:`surflayerSelector = 3` and do not use that depth. Selector 3 requires the surface layer to be on.
+
+Keep :code:`urban_heatRedis = 0` with selector 3. The building volume is the thermal reservoir, and redistribution would add that heat a second time through the streets. The checked-in Dallas namelist stays at :code:`urbanSelector = 1`, which is the published tutorial configuration.
+
+.. code-block:: none
+
+   #--URBAN
+   urbanSelector = 3 # building temperature follows the surface thermal boundary condition
+   urban_heatRedis = 0 # keep off with urbanSelector = 3
