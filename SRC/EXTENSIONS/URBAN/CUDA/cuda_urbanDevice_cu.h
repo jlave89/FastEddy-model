@@ -53,9 +53,10 @@ __global__ void cudaDevice_URBANfinal(float* hydroFlds_d, float* hydroFldsFrhs_d
 	                              float* hydroAuxScalars_d, float* hydroAuxScalarsFrhs_d,
                                       float* hydroFldsFrhsMoist_d,
 			      	      float* building_mask_d);
-__global__ void cudaDevice_URBANthermalBC(float dt, float* hydroFlds_d, float* hydroBaseStateFlds_d,
-                                          float* building_mask_d, float* tskin_d,
-                                          float* urban_flux_bc_d, float* urban_theta_bc_d);
+/*----->>>>> int cuda_urbanApplyAtmosphericProfile(); ----------------------------------------------------
+* Set building theta(z) and rho(z) to the horizontal mean of the non-building air at that height.
+*/
+extern "C" int cuda_urbanApplyAtmosphericProfile();
 
 /*----->>>>> __device__ void  cudaDevice_UrbanDragMethod();  --------------------------------------------------
 * This cuda kerne lsets up the cells and their id in the urban drag-based approach

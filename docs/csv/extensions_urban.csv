@@ -1,5 +1,5 @@
-**urbanSelector:** |br| Urban selector: |br| 0=off |br| 1=on with no thermal contribution |br| 2=on with thermal relaxation towards base state |br| 3=on with building temperature set from the surface thermal boundary condition, 0, 3, 0, O
+**urbanSelector:** |br| Urban selector: |br| 0=off |br| 1=on with no thermal contribution |br| 2=on with thermal relaxation towards base state |br| 3=on with building potential temperature and density set to the horizontal-mean atmospheric profile at each height, 0, 3, 0, O
 **cd_build:** |br| c_d coefficient (m-1) used by the drag-based building formulation: |br| -c_d|u_i|u_i |br| *C-O if urbanSelector > 0*, 0.0, 1e+8, 100.0, C-O
 **ct_build:** |br| c_t coefficient (s-1) used by the drag-based building formulation: |br| -c_t(rho*theta-rho_b*theta_b) & -c_t(rho-rho_b) |br| *C-O if urbanSelector > 0*, 0.0, 1e+8, 10.0, C-O
 **urban_heatRedis:** |br| Selector to activate surface heat redistribution |br| *C-O if urbanSelector > 0*, 0, 1, 0, C-O
-**urban_thermal_depth:** |br| Depth (m) used to integrate building potential temperature from the prescribed surface heat flux when urbanSelector = 3 and surflayerSelector = 1 |br| *C-O if urbanSelector == 3*, 1.0, 1e+5, 1000.0, C-O
+**urban_thermal_depth:** |br| Retained parameter. Not used when urbanSelector = 3 because building temperature follows the atmospheric profile |br| *C-O if urbanSelector == 3*, 1.0, 1e+5, 1000.0, C-O

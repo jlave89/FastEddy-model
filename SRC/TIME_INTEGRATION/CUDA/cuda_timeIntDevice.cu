@@ -157,11 +157,9 @@ extern "C" int cuda_timeIntDeviceCommence(int it){
 #endif
        } //end for RKstage
 #ifdef URBAN_EXT
-       /* Building temperature follows the completed time level, before tower samples read it. */
+       /* Building temperature matches the air profile at this time level, before tower samples read it. */
        if(urbanSelector == 3){
-         cudaDevice_URBANthermalBC<<<grid, tBlock>>>(dt, hydroFlds_d, hydroBaseStateFlds_d,
-                                                     building_mask_d, tskin_d,
-                                                     urban_flux_bc_d, urban_theta_bc_d);
+         errorCode = cuda_urbanApplyAtmosphericProfile();
          gpuErrchk( cudaGetLastError() );
        }
 #endif

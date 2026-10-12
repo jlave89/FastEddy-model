@@ -11,7 +11,7 @@ FastEddy-model Version 5.0.1 Release Notes (20260813)
 
 .. dropdown:: Enhancements
 
-   * Building temperature follows the surface thermal boundary condition (urbanSelector=3)
+   * Building temperature follows the atmospheric profile at each height (urbanSelector=3)
 
 
 FastEddy-model Version 5.0 Release Notes (20260518)

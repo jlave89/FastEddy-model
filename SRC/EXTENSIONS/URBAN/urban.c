@@ -95,10 +95,6 @@ int URBANInit(){
        fflush(stdout);
        MPI_Abort(MPI_COMM_WORLD, URBAN_FAIL);
      }
-     if((urban_heatRedis == 1) && (mpi_rank_world == 0)){
-       printf("WARNING: urbanSelector = 3 with urban_heatRedis = 1 double-counts the footprint heat. Recommended namelist pairing is urban_heatRedis = 0.\n");
-       fflush(stdout);
-     }
    }
 
    if(urbanSelector > 0){
