@@ -15,24 +15,18 @@
 */
 /*---URBAN*/
 /*Parameters*/
-__constant__ int urbanSelector_d;          /* urban selector: 0=off, 1=on, 2=relax to base state, 3=domain-mean air profile */
+__constant__ int urbanSelector_d;          /* urban selector: 0=off, 1=on, 2=relax to base state, 3=local air profile */
 __constant__ float cd_build_d;             /* c_d coefficient (m-1) used by the drag-based building formulation: -c_d|u|u_i */
 __constant__ float ct_build_d;             /* c_t coefficient (s-1) used by the drag-based building formulation: -c_t(rho*theta-rho_b*theta_b) & -c_t(rho-rho_b) */
 __constant__ float delta_aware_bdg_d;      /* scale-aware correction for building forcing and limiters */
 float* building_mask_d;                    /* building mask field: 0 (atmosphere) or 1 (building) */
 __constant__ int urban_heatRedis_d;        /* selector to activate surface heat redistribution */
 float *urban_heat_redis_d;                 /* Base Address of memory containing 2d map of heat redistribution coefficient in urban areas */
-int urban_nLev = 0;                        /* vertical levels, including halos, for the atmospheric profile */
-double *urban_sumTheta_d = NULL;
-double *urban_sumRho_d = NULL;
-double *urban_sumCount_d = NULL;
-float *urban_theta_ref_d = NULL;           /* horizontal-mean air potential temperature at each level */
-float *urban_rho_ref_d = NULL;             /* horizontal-mean air density at each level */
-double *urban_sumTheta_h = NULL;
-double *urban_sumRho_h = NULL;
-double *urban_sumCount_h = NULL;
-float *urban_theta_ref_h = NULL;
-float *urban_rho_ref_h = NULL;
+int urban_nVol = 0;                        /* halo-inclusive grid size for the local building fill */
+float *urban_theta_layer_d = NULL;         /* potential temperature written by the current layer */
+float *urban_rho_layer_d = NULL;           /* density written by the current layer */
+int *urban_known_d = NULL;                 /* 0=unset, 1=committed, 2=set by the current layer */
+int *urban_layerCount_d = NULL;
 
 /*#################------------ URBAN submodule function definitions ------------------#############*/
 /*----->>>>> int cuda_urbanDeviceSetup();       ---------------------------------------------------------
@@ -59,19 +53,13 @@ extern "C" int cuda_urbanDeviceSetup(){
      cudaMemcpy(urban_heat_redis_d, urban_heat_redis, Nelems*sizeof(float), cudaMemcpyHostToDevice);
    }
 
-   /* Atmospheric theta and rho profiles copied into the building after each timestep. */
+   /* Scratch for the inward building-temperature fill. */
    if(urbanSelector == 3){
-     urban_nLev = Nzp + 2*Nh;
-     gpuErrchk( cudaMalloc((void**)&urban_sumTheta_d, urban_nLev*sizeof(double)) );
-     gpuErrchk( cudaMalloc((void**)&urban_sumRho_d, urban_nLev*sizeof(double)) );
-     gpuErrchk( cudaMalloc((void**)&urban_sumCount_d, urban_nLev*sizeof(double)) );
-     gpuErrchk( cudaMalloc((void**)&urban_theta_ref_d, urban_nLev*sizeof(float)) );
-     gpuErrchk( cudaMalloc((void**)&urban_rho_ref_d, urban_nLev*sizeof(float)) );
-     urban_sumTheta_h = (double*)malloc(urban_nLev*sizeof(double));
-     urban_sumRho_h = (double*)malloc(urban_nLev*sizeof(double));
-     urban_sumCount_h = (double*)malloc(urban_nLev*sizeof(double));
-     urban_theta_ref_h = (float*)malloc(urban_nLev*sizeof(float));
-     urban_rho_ref_h = (float*)malloc(urban_nLev*sizeof(float));
+     urban_nVol = (Nxp+2*Nh)*(Nyp+2*Nh)*(Nzp+2*Nh);
+     gpuErrchk( cudaMalloc((void**)&urban_theta_layer_d, urban_nVol*sizeof(float)) );
+     gpuErrchk( cudaMalloc((void**)&urban_rho_layer_d, urban_nVol*sizeof(float)) );
+     gpuErrchk( cudaMalloc((void**)&urban_known_d, urban_nVol*sizeof(int)) );
+     gpuErrchk( cudaMalloc((void**)&urban_layerCount_d, sizeof(int)) );
    }
 
    return(errorCode);
@@ -89,16 +77,10 @@ extern "C" int cuda_urbanDeviceCleanup(){
      cudaFree(urban_heat_redis_d);
    }
    if(urbanSelector == 3){
-     cudaFree(urban_sumTheta_d);
-     cudaFree(urban_sumRho_d);
-     cudaFree(urban_sumCount_d);
-     cudaFree(urban_theta_ref_d);
-     cudaFree(urban_rho_ref_d);
-     free(urban_sumTheta_h);
-     free(urban_sumRho_h);
-     free(urban_sumCount_h);
-     free(urban_theta_ref_h);
-     free(urban_rho_ref_h);
+     cudaFree(urban_theta_layer_d);
+     cudaFree(urban_rho_layer_d);
+     cudaFree(urban_known_d);
+     cudaFree(urban_layerCount_d);
    }
 
    return(errorCode);
@@ -227,72 +209,105 @@ __device__ void cudaDevice_URBANapplyThermalState(float* rho, float* u, float* v
   *w = 0.0;
 }
 
-/*----->>>>> __global__ void cudaDevice_URBANprofileReduce(); --------------------------------------------
-* Sum potential temperature and density over owned air cells. One shared-memory total per level
-* in the block, then one global atomic so the whole domain can be averaged on the host.
+/*----->>>>> __device__ void cudaDevice_URBANaddNeighbor(); ----------------------------------------------
+* Add one face neighbor to the local mean. Atmosphere counts, including horizontal halos.
+* A building counts only after this rank has committed it on an earlier layer.
 */
-__global__ void cudaDevice_URBANprofileReduce(float* hydroFlds, float* bdg_mask,
-                                              double* sumTheta, double* sumRho, double* sumCount){
-   extern __shared__ double urban_sh[];
+__device__ void cudaDevice_URBANaddNeighbor(int ni, int nj, int nk, int nI, int nJ,
+                                            int iStride, int jStride, int kStride, int fldStride,
+                                            float* hydroFlds, float* bdg_mask, int* known,
+                                            float* sumTheta, float* sumRho, int* nsrc){
+   int nijk;
+   int owned;
+   float rho_cell;
+
+   if((ni < 0) || (ni >= nI) || (nj < 0) || (nj >= nJ)){
+     return;
+   }
+   if((nk < kMin_d) || (nk >= kMax_d)){
+     return;
+   }
+   nijk = ni*iStride + nj*jStride + nk*kStride;
+   if(bdg_mask[nijk] <= 0.0){
+     rho_cell = hydroFlds[fldStride*RHO_INDX+nijk];
+     if(rho_cell > 0.0){
+       *sumTheta += hydroFlds[fldStride*THETA_INDX+nijk]/rho_cell;
+       *sumRho += rho_cell;
+       *nsrc += 1;
+     }
+   }else{
+     owned = (ni >= iMin_d) && (ni < iMax_d) && (nj >= jMin_d) && (nj < jMax_d);
+     if(owned && (known[nijk] == 1)){
+       rho_cell = hydroFlds[fldStride*RHO_INDX+nijk];
+       if(rho_cell > 0.0){
+         *sumTheta += hydroFlds[fldStride*THETA_INDX+nijk]/rho_cell;
+         *sumRho += rho_cell;
+         *nsrc += 1;
+       }
+     }
+   }
+} // end cudaDevice_URBANaddNeighbor()
+
+/*----->>>>> __global__ void cudaDevice_URBANlocalLayer(); ----------------------------------------------
+* Set building cells that touch a source from an earlier layer. Sources are atmosphere cells
+* and owned building cells already committed. Writes stay invisible until the commit kernel.
+*/
+__global__ void cudaDevice_URBANlocalLayer(float* hydroFlds, float* bdg_mask, int* known,
+                                           float* theta_layer, float* rho_layer, int* layerCount){
    int i,j,k,ijk;
    int fldStride;
    int iStride,jStride,kStride;
-   int nLev;
-   double* shTheta;
-   double* shRho;
-   double* shCount;
-   float rho_cell;
-   float theta_cell;
+   int nI,nJ;
+   int nsrc;
+   float sumTheta;
+   float sumRho;
 
    i = (blockIdx.x)*blockDim.x + threadIdx.x;
    j = (blockIdx.y)*blockDim.y + threadIdx.y;
    k = (blockIdx.z)*blockDim.z + threadIdx.z;
-   shTheta = &urban_sh[0];
-   shRho = &urban_sh[blockDim.z];
-   shCount = &urban_sh[2*blockDim.z];
-
-   if((threadIdx.x == 0) && (threadIdx.y == 0)){
-     shTheta[threadIdx.z] = 0.0;
-     shRho[threadIdx.z] = 0.0;
-     shCount[threadIdx.z] = 0.0;
-   }
-   __syncthreads();
 
    fldStride = (Nx_d+2*Nh_d)*(Ny_d+2*Nh_d)*(Nz_d+2*Nh_d);
    iStride = (Ny_d+2*Nh_d)*(Nz_d+2*Nh_d);
    jStride = (Nz_d+2*Nh_d);
    kStride = 1;
-   nLev = Nz_d+2*Nh_d;
+   nI = Nx_d+2*Nh_d;
+   nJ = Ny_d+2*Nh_d;
 
    if((i >= iMin_d)&&(i < iMax_d) &&
       (j >= jMin_d)&&(j < jMax_d) &&
-      (k >= kMin_d)&&(k < kMax_d) &&
-      (k < nLev)){
+      (k >= kMin_d)&&(k < kMax_d)){
       ijk = i*iStride + j*jStride + k*kStride;
-      if(bdg_mask[ijk] <= 0.0){
-        rho_cell = hydroFlds[fldStride*RHO_INDX+ijk];
-        if(rho_cell > 0.0){
-          theta_cell = hydroFlds[fldStride*THETA_INDX+ijk]/rho_cell;
-          atomicAdd(&shTheta[threadIdx.z], (double)theta_cell);
-          atomicAdd(&shRho[threadIdx.z], (double)rho_cell);
-          atomicAdd(&shCount[threadIdx.z], 1.0);
+      if((bdg_mask[ijk] > 0.0) && (known[ijk] == 0)){
+        sumTheta = 0.0;
+        sumRho = 0.0;
+        nsrc = 0;
+        cudaDevice_URBANaddNeighbor(i-1, j, k, nI, nJ, iStride, jStride, kStride, fldStride,
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+        cudaDevice_URBANaddNeighbor(i+1, j, k, nI, nJ, iStride, jStride, kStride, fldStride,
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+        cudaDevice_URBANaddNeighbor(i, j-1, k, nI, nJ, iStride, jStride, kStride, fldStride,
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+        cudaDevice_URBANaddNeighbor(i, j+1, k, nI, nJ, iStride, jStride, kStride, fldStride,
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+        cudaDevice_URBANaddNeighbor(i, j, k-1, nI, nJ, iStride, jStride, kStride, fldStride,
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+        cudaDevice_URBANaddNeighbor(i, j, k+1, nI, nJ, iStride, jStride, kStride, fldStride,
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+        if(nsrc > 0){
+          theta_layer[ijk] = sumTheta/(float)nsrc;
+          rho_layer[ijk] = sumRho/(float)nsrc;
+          known[ijk] = 2;
+          atomicAdd(layerCount, 1);
         }
       }
    }
-   __syncthreads();
+} // end cudaDevice_URBANlocalLayer()
 
-   if((threadIdx.x == 0) && (threadIdx.y == 0) && (k >= 0) && (k < nLev) && (shCount[threadIdx.z] > 0.0)){
-     atomicAdd(&sumTheta[k], shTheta[threadIdx.z]);
-     atomicAdd(&sumRho[k], shRho[threadIdx.z]);
-     atomicAdd(&sumCount[k], shCount[threadIdx.z]);
-   }
-} // end cudaDevice_URBANprofileReduce()
-
-/*----->>>>> __global__ void cudaDevice_URBANthermalBC(); ----------------------------------------------------
-* Write the atmospheric profile into owned building cells. A zero reference means that level had no air cells.
+/*----->>>>> __global__ void cudaDevice_URBANlocalCommit(); ---------------------------------------------
+* Copy this layer into the prognostic fields and mark those cells as sources for the next layer.
 */
-__global__ void cudaDevice_URBANthermalBC(float* hydroFlds, float* bdg_mask,
-                                          float* theta_ref, float* rho_ref){
+__global__ void cudaDevice_URBANlocalCommit(float* hydroFlds, int* known,
+                                            float* theta_layer, float* rho_layer){
    int i,j,k,ijk;
    int fldStride;
    int iStride,jStride,kStride;
@@ -310,55 +325,44 @@ __global__ void cudaDevice_URBANthermalBC(float* hydroFlds, float* bdg_mask,
       (j >= jMin_d)&&(j < jMax_d) &&
       (k >= kMin_d)&&(k < kMax_d)){
       ijk = i*iStride + j*jStride + k*kStride;
-      if((bdg_mask[ijk] > 0.0) && (theta_ref[k] > 0.0) && (rho_ref[k] > 0.0)){
+      if(known[ijk] == 2){
         cudaDevice_URBANapplyThermalState(&hydroFlds[fldStride*RHO_INDX+ijk],
                                           &hydroFlds[fldStride*U_INDX+ijk],
                                           &hydroFlds[fldStride*V_INDX+ijk],
                                           &hydroFlds[fldStride*W_INDX+ijk],
                                           &hydroFlds[fldStride*THETA_INDX+ijk],
-                                          rho_ref[k], theta_ref[k]);
+                                          rho_layer[ijk], theta_layer[ijk]);
+        known[ijk] = 1;
       }
    }
-} // end cudaDevice_URBANthermalBC()
+} // end cudaDevice_URBANlocalCommit()
 
 /*----->>>>> extern "C" int cuda_urbanApplyAtmosphericProfile(); ---------------------------------------
-* Set building theta(z) and rho(z) to the horizontal mean of the non-building air at that height.
+* Fill building temperature from the adjacent air, one layer deeper on each pass.
 * hydroFlds_d is defined later in this translation unit.
 */
 extern float *hydroFlds_d;
 extern "C" int cuda_urbanApplyAtmosphericProfile(){
    int errorCode = CUDA_URBAN_SUCCESS;
-   int k;
-   size_t shmem;
+   int layer;
+   int layerCount;
+   int maxLayers;
 
-   gpuErrchk( cudaMemset(urban_sumTheta_d, 0, urban_nLev*sizeof(double)) );
-   gpuErrchk( cudaMemset(urban_sumRho_d, 0, urban_nLev*sizeof(double)) );
-   gpuErrchk( cudaMemset(urban_sumCount_d, 0, urban_nLev*sizeof(double)) );
-   shmem = (size_t)tBlock.z*3*sizeof(double);
-   cudaDevice_URBANprofileReduce<<<grid, tBlock, shmem>>>(hydroFlds_d, building_mask_d,
-                                                          urban_sumTheta_d, urban_sumRho_d, urban_sumCount_d);
-   gpuErrchk( cudaGetLastError() );
-   gpuErrchk( cudaMemcpy(urban_sumTheta_h, urban_sumTheta_d, urban_nLev*sizeof(double), cudaMemcpyDeviceToHost) );
-   gpuErrchk( cudaMemcpy(urban_sumRho_h, urban_sumRho_d, urban_nLev*sizeof(double), cudaMemcpyDeviceToHost) );
-   gpuErrchk( cudaMemcpy(urban_sumCount_h, urban_sumCount_d, urban_nLev*sizeof(double), cudaMemcpyDeviceToHost) );
-
-   MPI_Allreduce(MPI_IN_PLACE, urban_sumTheta_h, urban_nLev, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-   MPI_Allreduce(MPI_IN_PLACE, urban_sumRho_h, urban_nLev, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-   MPI_Allreduce(MPI_IN_PLACE, urban_sumCount_h, urban_nLev, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-
-   for(k=0; k < urban_nLev; k++){
-     if(urban_sumCount_h[k] > 0.0){
-       urban_theta_ref_h[k] = (float)(urban_sumTheta_h[k]/urban_sumCount_h[k]);
-       urban_rho_ref_h[k] = (float)(urban_sumRho_h[k]/urban_sumCount_h[k]);
-     }else{
-       urban_theta_ref_h[k] = 0.0;
-       urban_rho_ref_h[k] = 0.0;
+   gpuErrchk( cudaMemset(urban_known_d, 0, urban_nVol*sizeof(int)) );
+   maxLayers = (iMax-iMin)+(jMax-jMin)+(kMax-kMin);
+   for(layer=0; layer < maxLayers; layer++){
+     gpuErrchk( cudaMemset(urban_layerCount_d, 0, sizeof(int)) );
+     cudaDevice_URBANlocalLayer<<<grid, tBlock>>>(hydroFlds_d, building_mask_d, urban_known_d,
+                                                  urban_theta_layer_d, urban_rho_layer_d, urban_layerCount_d);
+     gpuErrchk( cudaGetLastError() );
+     gpuErrchk( cudaMemcpy(&layerCount, urban_layerCount_d, sizeof(int), cudaMemcpyDeviceToHost) );
+     if(layerCount == 0){
+       break;
      }
+     cudaDevice_URBANlocalCommit<<<grid, tBlock>>>(hydroFlds_d, urban_known_d,
+                                                   urban_theta_layer_d, urban_rho_layer_d);
+     gpuErrchk( cudaGetLastError() );
    }
-   gpuErrchk( cudaMemcpy(urban_theta_ref_d, urban_theta_ref_h, urban_nLev*sizeof(float), cudaMemcpyHostToDevice) );
-   gpuErrchk( cudaMemcpy(urban_rho_ref_d, urban_rho_ref_h, urban_nLev*sizeof(float), cudaMemcpyHostToDevice) );
-   cudaDevice_URBANthermalBC<<<grid, tBlock>>>(hydroFlds_d, building_mask_d, urban_theta_ref_d, urban_rho_ref_d);
-   gpuErrchk( cudaGetLastError() );
    return(errorCode);
 } // end cuda_urbanApplyAtmosphericProfile()
 

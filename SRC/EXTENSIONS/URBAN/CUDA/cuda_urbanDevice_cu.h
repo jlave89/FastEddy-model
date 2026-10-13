@@ -51,7 +51,7 @@ __global__ void cudaDevice_URBANfinal(float* hydroFlds_d, float* hydroFldsFrhs_d
 			      	      float* building_mask_d);
 
 /*----->>>>> int cuda_urbanApplyAtmosphericProfile(); ----------------------------------------------------
-* Set building theta(z) and rho(z) to the horizontal mean of the non-building air at that height.
+* Set each building cell from its face neighbors, moving from the surrounding air inward.
 */
 extern "C" int cuda_urbanApplyAtmosphericProfile();
 
