@@ -190,7 +190,8 @@ all: FastEddy
         ../HYDRO_CORE/CUDA/cuda_moistureDevice.cu \
         ../HYDRO_CORE/CUDA/cuda_filtersDevice.cu \
 	../HYDRO_CORE/CUDA/cuda_cellpertDevice.cu \
-	../HYDRO_CORE/CUDA/cuda_towersDevice.cu
+	../HYDRO_CORE/CUDA/cuda_towersDevice.cu \
+	../EXTENSIONS/URBAN/CUDA/cuda_urbanDevice.cu
 	$(TEST_CU_CC) $(TEST_CU_CFLAGS) -dc $< -o $@
 ################################################################################
 # Generic Executable

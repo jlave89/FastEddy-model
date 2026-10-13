@@ -156,6 +156,13 @@ extern "C" int cuda_timeIntDeviceCommence(int it){
           printf("cuda_timeIntCommenceRK3_WS2002()  Kernel execution time (ms): %12.8f\n", elapsedTime);
 #endif
        } //end for RKstage
+#ifdef URBAN_EXT
+       /* Building temperature matches the air profile at this time level, before tower samples read it. */
+       if(urbanSelector == 3){
+         errorCode = cuda_urbanApplyAtmosphericProfile();
+         gpuErrchk( cudaGetLastError() );
+       }
+#endif
        if(towerIOSelector > 0){
 	 Ntaus = 9;
          //Append time-advanced data to tower buffers

@@ -21,7 +21,7 @@
 
 /*##############------------------- URBAN submodule variable declarations ---------------------#################*/
 /* Parameters */
-extern __constant__ int urbanSelector_d;          /* urban selector: 0=off, 1=on */
+extern __constant__ int urbanSelector_d;          /* urban selector: 0=off, 1=on, 2=relax to base state, 3=domain-mean air profile */
 extern __constant__ float cd_build_d;             /* c_d coefficient (m-1) used by the drag-based building formulation: -c_d|u_i|u_i */
 extern __constant__ float ct_build_d;             /* c_t coefficient (s-1) used by the drag-based building formulation: -c_t(rho*theta-rho_b*theta_b) & -c_t(rho-rho_b) */
 extern __constant__ float delta_aware_bdg_d;      /* scale-aware correction for building forcing and limiters */
@@ -49,6 +49,11 @@ __global__ void cudaDevice_URBANfinal(float* hydroFlds_d, float* hydroFldsFrhs_d
 	                              float* hydroAuxScalars_d, float* hydroAuxScalarsFrhs_d,
                                       float* hydroFldsFrhsMoist_d,
 			      	      float* building_mask_d);
+
+/*----->>>>> int cuda_urbanApplyAtmosphericProfile(); ----------------------------------------------------
+* Set building theta(z) and rho(z) to the horizontal mean of the non-building air at that height.
+*/
+extern "C" int cuda_urbanApplyAtmosphericProfile();
 
 /*----->>>>> __device__ void  cudaDevice_UrbanDragMethod();  --------------------------------------------------
 * This cuda kerne lsets up the cells and their id in the urban drag-based approach

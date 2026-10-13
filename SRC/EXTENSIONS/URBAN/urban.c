@@ -14,7 +14,7 @@
 * limitations under the License.
 */
 /*Urban parameters*/
-int urbanSelector;          /* urban selector: 0=off, 1=on, 2=on with thermal relaxation towards base state */
+int urbanSelector;          /* urban selector: 0=off, 1=on, 2=on with thermal relaxation towards base state, 3=building temperature follows the domain-mean air profile */
 float cd_build;             /* c_d coefficient (m-1) used by the drag-based building formulation: -c_d|u_i|u_i */
 float ct_build;             /* c_t coefficient (s-1) used by the drag-based building formulation: -c_t(rho*theta-rho_b*theta_b) & -c_t(rho-rho_b) */
 float *building_mask;       /* Base Address of memory containing building mask 0,1 field */
@@ -29,7 +29,7 @@ int URBANGetParams(){
    int errorCode = URBAN_SUCCESS;
 
    urbanSelector = 0; // Default to off
-   errorCode = queryIntegerParameter("urbanSelector", &urbanSelector, 0, 2, PARAM_OPTIONAL);
+   errorCode = queryIntegerParameter("urbanSelector", &urbanSelector, 0, 3, PARAM_OPTIONAL);
    if(urbanSelector > 0){
      cd_build = 100.0; // Default to 100.0
      errorCode = queryFloatParameter("cd_build", &cd_build, 0.0, 1e+8, PARAM_OPTIONAL);
@@ -48,7 +48,7 @@ int URBANGetParams(){
 int URBANPrintParams(){
    int errorCode = URBAN_SUCCESS;
    if(mpi_rank_world == 0){
-     printParameter("urbanSelector", "urban selector: 0=off, 1=on, 2=on with thermal relaxation towards base state");	   
+     printParameter("urbanSelector", "urban selector: 0=off, 1=on, 2=on with thermal relaxation towards base state, 3=building temperature follows the domain-mean air profile");	  
      if(urbanSelector > 0){
       printParameter("cd_build", "drag coefficient for buildings when urbanSelector > 0");
       printParameter("ct_build", "temperature and density damping coefficient for buildings when urbanSelector > 0");
