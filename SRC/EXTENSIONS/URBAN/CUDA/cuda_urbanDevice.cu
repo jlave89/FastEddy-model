@@ -210,8 +210,10 @@ __device__ void cudaDevice_URBANapplyThermalState(float* rho, float* u, float* v
 }
 
 /*----->>>>> __device__ void cudaDevice_URBANaddNeighbor(); ----------------------------------------------
-* Add one face neighbor to the local mean. Atmosphere counts, including horizontal halos.
-* A building counts only after this rank has committed it on an earlier layer.
+* Add one face neighbor to the local mean.
+* Air counts on this rank and in the halo. A halo building does not: its temperature
+* is filled by the rank that owns it. An owned building counts only after this rank
+* has committed it on an earlier layer.
 */
 __device__ void cudaDevice_URBANaddNeighbor(int ni, int nj, int nk, int nI, int nJ,
                                             int iStride, int jStride, int kStride, int fldStride,
@@ -228,6 +230,7 @@ __device__ void cudaDevice_URBANaddNeighbor(int ni, int nj, int nk, int nI, int 
      return;
    }
    nijk = ni*iStride + nj*jStride + nk*kStride;
+   owned = (ni >= iMin_d) && (ni < iMax_d) && (nj >= jMin_d) && (nj < jMax_d);
    if(bdg_mask[nijk] <= 0.0){
      rho_cell = hydroFlds[fldStride*RHO_INDX+nijk];
      if(rho_cell > 0.0){
@@ -235,15 +238,12 @@ __device__ void cudaDevice_URBANaddNeighbor(int ni, int nj, int nk, int nI, int 
        *sumRho += rho_cell;
        *nsrc += 1;
      }
-   }else{
-     owned = (ni >= iMin_d) && (ni < iMax_d) && (nj >= jMin_d) && (nj < jMax_d);
-     if(owned && (known[nijk] == 1)){
-       rho_cell = hydroFlds[fldStride*RHO_INDX+nijk];
-       if(rho_cell > 0.0){
-         *sumTheta += hydroFlds[fldStride*THETA_INDX+nijk]/rho_cell;
-         *sumRho += rho_cell;
-         *nsrc += 1;
-       }
+   }else if(owned && (known[nijk] == 1)){
+     rho_cell = hydroFlds[fldStride*RHO_INDX+nijk];
+     if(rho_cell > 0.0){
+       *sumTheta += hydroFlds[fldStride*THETA_INDX+nijk]/rho_cell;
+       *sumRho += rho_cell;
+       *nsrc += 1;
      }
    }
 } // end cudaDevice_URBANaddNeighbor()
@@ -347,6 +347,16 @@ extern "C" int cuda_urbanApplyAtmosphericProfile(){
    int layer;
    int layerCount;
    int maxLayers;
+   static int urban_maskHaloReady = 0;
+
+   /* The mask is static. Exchange it once so a halo cell that is a building is not seen as air. */
+   if(urban_maskHaloReady == 0){
+     fecuda_SendRecvWestEast(building_mask_d, building_mask_d, hydroBCs);
+     fecuda_SendRecvEastWest(building_mask_d, building_mask_d, hydroBCs);
+     fecuda_SendRecvSouthNorth(building_mask_d, building_mask_d, hydroBCs);
+     fecuda_SendRecvNorthSouth(building_mask_d, building_mask_d, hydroBCs);
+     urban_maskHaloReady = 1;
+   }
 
    gpuErrchk( cudaMemset(urban_known_d, 0, urban_nVol*sizeof(int)) );
    maxLayers = (iMax-iMin)+(jMax-jMin)+(kMax-kMin);
