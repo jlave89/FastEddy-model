@@ -218,10 +218,11 @@ __device__ void cudaDevice_URBANapplyThermalState(float* rho, float* u, float* v
 __device__ void cudaDevice_URBANaddNeighbor(int ni, int nj, int nk, int nI, int nJ,
                                             int iStride, int jStride, int kStride, int fldStride,
                                             float* hydroFlds, float* bdg_mask, int* known,
-                                            float* sumTheta, float* sumRho, int* nsrc){
+                                            float* sumTheta, float* sumRhoTheta, int* nsrc){
    int nijk;
    int owned;
    float rho_cell;
+   float rhoTheta_cell;
 
    if((ni < 0) || (ni >= nI) || (nj < 0) || (nj >= nJ)){
      return;
@@ -233,16 +234,18 @@ __device__ void cudaDevice_URBANaddNeighbor(int ni, int nj, int nk, int nI, int 
    owned = (ni >= iMin_d) && (ni < iMax_d) && (nj >= jMin_d) && (nj < jMax_d);
    if(bdg_mask[nijk] <= 0.0){
      rho_cell = hydroFlds[fldStride*RHO_INDX+nijk];
-     if(rho_cell > 0.0){
-       *sumTheta += hydroFlds[fldStride*THETA_INDX+nijk]/rho_cell;
-       *sumRho += rho_cell;
+     rhoTheta_cell = hydroFlds[fldStride*THETA_INDX+nijk];
+     if((rho_cell > 0.0) && (rhoTheta_cell > 0.0)){
+       *sumTheta += rhoTheta_cell/rho_cell;
+       *sumRhoTheta += rhoTheta_cell;
        *nsrc += 1;
      }
    }else if(owned && (known[nijk] == 1)){
      rho_cell = hydroFlds[fldStride*RHO_INDX+nijk];
-     if(rho_cell > 0.0){
-       *sumTheta += hydroFlds[fldStride*THETA_INDX+nijk]/rho_cell;
-       *sumRho += rho_cell;
+     rhoTheta_cell = hydroFlds[fldStride*THETA_INDX+nijk];
+     if((rho_cell > 0.0) && (rhoTheta_cell > 0.0)){
+       *sumTheta += rhoTheta_cell/rho_cell;
+       *sumRhoTheta += rhoTheta_cell;
        *nsrc += 1;
      }
    }
@@ -260,7 +263,7 @@ __global__ void cudaDevice_URBANlocalLayer(float* hydroFlds, float* bdg_mask, in
    int nI,nJ;
    int nsrc;
    float sumTheta;
-   float sumRho;
+   float sumRhoTheta;
 
    i = (blockIdx.x)*blockDim.x + threadIdx.x;
    j = (blockIdx.y)*blockDim.y + threadIdx.y;
@@ -279,23 +282,24 @@ __global__ void cudaDevice_URBANlocalLayer(float* hydroFlds, float* bdg_mask, in
       ijk = i*iStride + j*jStride + k*kStride;
       if((bdg_mask[ijk] > 0.0) && (known[ijk] == 0)){
         sumTheta = 0.0;
-        sumRho = 0.0;
+        sumRhoTheta = 0.0;
         nsrc = 0;
         cudaDevice_URBANaddNeighbor(i-1, j, k, nI, nJ, iStride, jStride, kStride, fldStride,
-                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRhoTheta, &nsrc);
         cudaDevice_URBANaddNeighbor(i+1, j, k, nI, nJ, iStride, jStride, kStride, fldStride,
-                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRhoTheta, &nsrc);
         cudaDevice_URBANaddNeighbor(i, j-1, k, nI, nJ, iStride, jStride, kStride, fldStride,
-                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRhoTheta, &nsrc);
         cudaDevice_URBANaddNeighbor(i, j+1, k, nI, nJ, iStride, jStride, kStride, fldStride,
-                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRhoTheta, &nsrc);
         cudaDevice_URBANaddNeighbor(i, j, k-1, nI, nJ, iStride, jStride, kStride, fldStride,
-                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRhoTheta, &nsrc);
         cudaDevice_URBANaddNeighbor(i, j, k+1, nI, nJ, iStride, jStride, kStride, fldStride,
-                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRho, &nsrc);
-        if(nsrc > 0){
+                                    hydroFlds, bdg_mask, known, &sumTheta, &sumRhoTheta, &nsrc);
+        if((nsrc > 0) && (sumTheta > 0.0)){
           theta_layer[ijk] = sumTheta/(float)nsrc;
-          rho_layer[ijk] = sumRho/(float)nsrc;
+          /* rho*theta is the averaged neighbor value, not mean(rho)*mean(theta). */
+          rho_layer[ijk] = (sumRhoTheta/(float)nsrc)/theta_layer[ijk];
           known[ijk] = 2;
           atomicAdd(layerCount, 1);
         }
