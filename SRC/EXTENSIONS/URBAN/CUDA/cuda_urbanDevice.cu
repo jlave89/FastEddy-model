@@ -198,15 +198,12 @@ __global__ void cudaDevice_URBANfinal(float* hydroFlds_d, float* hydroFldsFrhs_d
 
 /*----->>>>> __device__ void cudaDevice_URBANapplyThermalState(); ---------------------------------------------
 * Match the atmospheric density and potential temperature, so the perturbation pressure matches
-* the air as well. Momentum is removed explicitly.
+* the air as well. Velocity is left to the building drag.
 */
 __device__ void cudaDevice_URBANapplyThermalState(float* rho, float* u, float* v, float* w, float* rhoTheta,
                                                   float rho_ref, float theta_ref){
   *rho = rho_ref;
   *rhoTheta = rho_ref*theta_ref;
-  *u = 0.0;
-  *v = 0.0;
-  *w = 0.0;
 }
 
 /*----->>>>> __device__ void cudaDevice_URBANaddNeighbor(); ----------------------------------------------
